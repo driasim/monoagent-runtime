@@ -1,16 +1,13 @@
 """Unit tests for enterprise monoagent runtime kernel, memory, MCP router, and telemetry."""
 
-import pytest
 import asyncio
 from monoagent.core.task import LongRunningTask, TaskState
 from monoagent.memory.shared_memory import HierarchicalMemory
 from monoagent.mcp.router import MCPToolRouter
 from monoagent.telemetry.tracer import AgentTelemetryTracer
-from monoagent.skills.loader import PlaybookRegistry
 
 
-@pytest.mark.asyncio
-async def test_task_checkpointing():
+def test_task_checkpointing():
     task = LongRunningTask(
         task_id="task-test-01",
         title="Check system logs",
@@ -29,8 +26,7 @@ async def test_task_checkpointing():
     assert cp.scratchpad["current_pid"] == 1234
 
 
-@pytest.mark.asyncio
-async def test_hierarchical_memory():
+def test_hierarchical_memory():
     mem = HierarchicalMemory(tenant_id="tenant_alpha")
     mem.register_knowledge("database_policy", "Always terminate idle connections > 300s.")
     assert "Always terminate" in mem.lookup_knowledge("database_policy")
@@ -41,37 +37,38 @@ async def test_hierarchical_memory():
     assert episodes[0].metadata["outcome"] == "SUCCESS"
 
 
-@pytest.mark.asyncio
-async def test_mcp_circuit_breaker():
-    router = MCPToolRouter(failure_threshold=2)
+def test_mcp_circuit_breaker():
+    async def _run():
+        router = MCPToolRouter(failure_threshold=2)
 
-    def failing_tool():
-        raise RuntimeError("External API 500 Server Error")
+        def failing_tool():
+            raise RuntimeError("External API 500 Server Error")
 
-    router.register_tool(
-        name="flaky_service",
-        description="Fails consistently",
-        handler=failing_tool,
-        parameters_schema={"type": "object"},
-    )
+        router.register_tool(
+            name="flaky_service",
+            description="Fails consistently",
+            handler=failing_tool,
+            parameters_schema={"type": "object"},
+        )
 
-    # Call 1: failure
-    res1 = await router.invoke_tool("flaky_service", {})
-    assert res1["status"] == "error"
-    assert router.circuit_breakers["flaky_service"].is_tripped is False
+        # Call 1: failure
+        res1 = await router.invoke_tool("flaky_service", {})
+        assert res1["status"] == "error"
+        assert router.circuit_breakers["flaky_service"].is_tripped is False
 
-    # Call 2: failure -> trips circuit breaker
-    res2 = await router.invoke_tool("flaky_service", {})
-    assert res2["status"] == "error"
-    assert router.circuit_breakers["flaky_service"].is_tripped is True
+        # Call 2: failure -> trips circuit breaker
+        res2 = await router.invoke_tool("flaky_service", {})
+        assert res2["status"] == "error"
+        assert router.circuit_breakers["flaky_service"].is_tripped is True
 
-    # Call 3: blocked by circuit breaker
-    res3 = await router.invoke_tool("flaky_service", {})
-    assert res3["status"] == "circuit_tripped"
+        # Call 3: blocked by circuit breaker
+        res3 = await router.invoke_tool("flaky_service", {})
+        assert res3["status"] == "circuit_tripped"
+
+    asyncio.run(_run())
 
 
-@pytest.mark.asyncio
-async def test_telemetry_cost_calculation():
+def test_telemetry_cost_calculation():
     tracer = AgentTelemetryTracer(
         task_id="task-otel-1",
         tenant_id="tenant_alpha",
